@@ -50,21 +50,67 @@ class ComfyUIBatchGenerator:
         scenes = []
         characters = {}
         try:
+            print(f"=== PARSING FILE: {file_path} ===")
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
-            if 'CHARACTER REFERENCE' in content:
-                char_section = content.split('SCENE-BY-SCENE')[0] if 'SCENE-BY-SCENE' in content else content
-                lines = char_section.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if line and ':' in line and line[0].isupper():
-                        if '(' in line and ')' in line:
-                            char_name = line.split(':')[0].strip()
-                            if char_name and not char_name.startswith('═') and not char_name.startswith('-'):
-                                characters[char_name] = line
+            print(f"File content length: {len(content)} characters")
+            print(f"First 200 characters: {content[:200]}")
             
+            # Parse characters - look for the CHARACTER REFERENCE section
             lines = content.split('\n')
+            i = 0
+            in_character_section = False
+            
+            while i < len(lines):
+                line = lines[i].strip()
+                
+                # More flexible detection of character reference section
+                if 'CHARACTER REFERENCE' in line and 'consistency' in line:
+                    in_character_section = True
+                    print(f"Found character section: {line}")
+                    i += 1
+                    continue
+                
+                # Stop parsing characters when we hit scenes or other sections
+                if line.startswith('IMAGE') or 'SCENE-BY-SCENE' in line or line.startswith('═══'):
+                    in_character_section = False
+                
+                # Parse character entries in the character section
+                if in_character_section and line and ':' in line:
+                    # Look for character names like "CASSIAN MIRE (Protagonist, Age 23):"
+                    if line.endswith(':') and ('(' in line or line.isupper()):
+                        # Extract character name (before parentheses or before colon)
+                        if '(' in line:
+                            char_name = line.split('(')[0].strip().rstrip(':')
+                        else:
+                            char_name = line.split(':')[0].strip()
+                        
+                        if char_name and len(char_name) > 2:  # Valid character name
+                            print(f"Found character: {char_name}")
+                            # Collect the character description from following lines
+                            full_description = line  # Start with the character line
+                            j = i + 1
+                            while j < len(lines):
+                                next_line = lines[j].strip()
+                                if not next_line:  # Empty line
+                                    break
+                                if next_line.startswith('-'):  # Description bullet point
+                                    full_description += ' ' + next_line
+                                elif ':' in next_line and next_line.endswith(':') and len(next_line.split(':')[0].split()) <= 4:  # Next character
+                                    break
+                                elif next_line.startswith('IMAGE') or next_line.startswith('SCENE'):
+                                    break
+                                else:
+                                    full_description += ' ' + next_line
+                                j += 1
+                            
+                            characters[char_name] = full_description
+                            print(f"Character description: {full_description[:100]}...")
+                
+                i += 1
+            
+            # Parse scenes
             i = 0
             while i < len(lines):
                 line = lines[i].strip()
@@ -85,6 +131,9 @@ class ComfyUIBatchGenerator:
                         })
                     continue
                 i += 1
+            
+            print(f"Parsing complete. Found {len(scenes)} scenes and {len(characters)} characters")
+            print(f"Characters: {list(characters.keys())}")
             
             return scenes, characters, len(scenes) > 0
         except Exception as e:
@@ -195,19 +244,10 @@ def create_ui():
             
             # TAB 2: Characters
             with gr.Tab("Characters"):
-                gr.Markdown("### Character Reference Images")
-                gr.Markdown("Upload reference images for your characters")
+                gr.Markdown("### Character Reference Cards")
+                gr.Markdown("Characters found in your imported episode file. Generate reference images for consistent character appearance.")
                 
-                with gr.Row():
-                    with gr.Column():
-                        char_name_input = gr.Textbox(label="Character Name (e.g., BRAMBLE QUICKWHISKER THISTLEWOOD)")
-                        char_image_input = gr.Image(label="Reference Image", type="filepath", height=300)
-                        upload_char_btn = gr.Button("Add Character Reference", variant="primary")
-                        char_status = gr.Textbox(label="Status")
-                    
-                    with gr.Column():
-                        gr.Markdown("### Uploaded Characters")
-                        char_list_display = gr.HTML(value="<p>No characters uploaded yet</p>")
+                char_container = gr.HTML(value="<p>No characters found. Please import an episode file first.</p>")
         
         # Helper functions
         def img_to_base64(img_path):
@@ -337,6 +377,35 @@ def create_ui():
                 badges += f"<span class='char-badge'>{ref_status} {char.split()[0]}</span>"
             return f"<div style='display: inline-flex; gap: 5px; margin-left: 10px;'>{badges}</div>"
         
+        def build_character_cards(characters):
+            if not characters:
+                return "<p>No characters found. Please import an episode file first.</p>"
+            
+            cards_html = ""
+            
+            for char_name, char_description in characters.items():
+                cards_html += f"""
+                <div class='scene-card' style='display: flex; gap: 20px; margin-bottom: 25px; padding: 15px;
+                            background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);'>
+                    <div style='flex: 2;'>
+                        <h3 style='margin: 0 0 10px 0; color: #333; font-size: 16px;'>{char_name}</h3>
+                        <div style='background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 10px; border-left: 3px solid #28a745; color: black;'>
+                            <strong>Description:</strong> {char_description}
+                        </div>
+                        <div style='margin-top: 10px;'>
+                            <button style='background: #28a745; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer;'>
+                                🎨 Generate Character Reference
+                            </button>
+                        </div>
+                    </div>
+                    <div style='flex: 1; display: flex; justify-content: center; align-items: center;'>
+                        <div style='width: 200px; height: 150px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: #999;'>No Image</div>
+                    </div>
+                </div>
+                """
+            
+            return cards_html
+        
         def build_image_preview(img_path):
             if img_path and os.path.exists(img_path):
                 img_base64 = img_to_base64(img_path)
@@ -358,18 +427,19 @@ def create_ui():
         
         def import_file(file):
             if not file:
-                return timeline_container.value, "Error: No file"
+                return timeline_container.value, "Error: No file", char_container.value
             
             scenes, characters, ok = generator.parse_episode_file(file.name)
             if ok:
                 app_state['scenes'] = scenes
                 app_state['characters'] = characters
                 app_state['generated_images'] = {}
-                html = build_timeline_html(scenes, app_state['generated_images'])
+                timeline_html = build_timeline_html(scenes, app_state['generated_images'])
+                char_html = build_character_cards(characters)
                 
-                return html, f"Imported {len(scenes)} scenes"
+                return timeline_html, f"Imported {len(scenes)} scenes and {len(characters)} characters", char_html
             
-            return timeline_container.value, "Error importing file"
+            return timeline_container.value, "Error importing file", char_container.value
         
         def generate_all(model, output_path, progress=gr.Progress()):
             if not app_state['scenes']:
@@ -452,10 +522,9 @@ def create_ui():
                 return timeline_container.value, f"❌ Error: {str(e)}"
         
         # Event handlers
-        import_btn.click(import_file, [file_input], [timeline_container, status])
+        import_btn.click(import_file, [file_input], [timeline_container, status, char_container])
         gen_all_btn.click(generate_all, [model_select, output_folder], [timeline_container, status])
         download_all_btn.click(create_zip, outputs=[download_file, status])
-        upload_char_btn.click(add_character_reference, [char_name_input, char_image_input], [char_status, char_list_display])
         
         # Hidden regenerate handler for timeline buttons
         hidden_regen_btn.click(regenerate_single_scene, [hidden_scene_num, hidden_prompt, model_select], [timeline_container, status])
